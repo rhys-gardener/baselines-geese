@@ -16,6 +16,8 @@ Model can be submitted to kaggle using the files in the submission folder (copy 
 
 To do: 
 - Sort out folder structure
-
+- Logging to log file
+- Setup config file for experiments 
+- More tidy up
 
 
