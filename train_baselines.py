@@ -12,7 +12,7 @@ from stable_baselines3.common.results_plotter import load_results, ts2xy
 from stable_baselines3.common.vec_env import SubprocVecEnv
 
 
-from GeeseGymWrapper import HungryGeeseKaggle
+from Code.GeeseGymWrapper import HungryGeeseKaggle
 
 import json
 
