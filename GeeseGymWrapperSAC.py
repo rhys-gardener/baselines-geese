@@ -1,128 +1,101 @@
 # Kaggle training
+# This is a slightly different version of the wrapper to use with stable baselines
 from collections import Counter
 from math import sqrt
 import gym
 import kaggle_environments as kaggle
+from kaggle_environments.envs.hungry_geese.hungry_geese import Observation, Configuration, Action, row_col, greedy_agent, GreedyAgent
+from agent import agent3
 import numpy as np
 
-FOOD_VALUE = 100
+import logging
+
+from gym.spaces import Discrete, Box
+
+FOOD_VALUE = 255
 SELF_HEAD_VALUE = 50
 SELF_BODY_VALUE = 51
 ENEMY_HEAD_VALUE = 10
 ENEMY_BODY_VALUE = 11
 
-class EnvWrap:
-    """A class to contain environments, so that a learning algorithm can just access the observation space and actions pace
-    I wouldn't have bothered but kaggle environments need some additional processing around the observation space
-    And I might as well create this in case I decide to make some environments in future..."""
-    def __init__(self, env_type, env_name, config=None):
-        self.env_name = env_name
-        self.env_type = env_type
-        if self.env_type == 'gym':
-            self.env = gym.make(env_name)
-            self.observation_space = self.env.observation_space.shape
-            if hasattr(self.env.action_space, 'n'):
-                self.discrete = True
-                self.action_size = self.env.action_space.n
-            else:
-                self.discrete = False
-                self.action_size = self.env.action_space.shape[0]
-            
+
+class HungryGeeseKaggle(gym.Env):
+
+    def __init__(self):
         
-        elif env_type=='kaggle':
-            if env_name == 'hungry_geese':
-                self.env = kaggle.make("hungry_geese")
-                self.num_agents = 4
-                self.env.reset(self.num_agents)
-                self.rows = self.env.configuration.rows
-                self.columns = self.env.configuration.columns
-                self.observation_space = (self.rows, self.columns, 3)
-                # self.observation_space = self.rows * self.columns
-                self.action_size = 4
-                self.discrete = True
-                self.actions = ['NORTH','SOUTH','WEST','EAST', '']
-                self.prev_head_locations = [0,0,0,0]
-                self.food_history = [0,0,0,0]
+        self.env = kaggle.make("hungry_geese")
+        self.num_agents = 4
+        self.env.reset(self.num_agents)
+        self.rows = self.env.configuration.rows
+        self.columns = self.env.configuration.columns
+        #self.observation_space = np.array((self.rows, self.columns, 3))
+        self.observation_space = Box(low=0, high=255, shape=(self.rows, self.columns, 3), dtype=np.uint8)
+        # self.observation_space = self.rows * self.columns
+        self.action_space = Box(low=-1, high=1, shape=(2,))
+        self.discrete = True
+        self.actions = ['NORTH','SOUTH','WEST','EAST', '']
+        self.prev_head_locations = [0,0,0,0]
+        self.food_history = [0,0,0,0]
+        self.names = ['geese1','geese2','geese3','geese4']
+        # Tuple corresponding to the min and max possible rewards
+        self.reward_range = (-20, 100)
+
+        self.trainer = self.env.train([None,agent3,agent3,'greedy'])
+        self.my_index = 0
+
                 
-        else:
-            print("I don't know what to do :( ")
-            return None
-    
-
     def reset(self):
-        if self.env_type=="gym":
-            self.env.reset()
-        elif self.env_type=='kaggle':
-            self.env.reset(num_agents=self.num_agents)
+        self.env.reset(num_agents=self.num_agents)
+        
+        state = self.get_geese_observation(self.env.state)
+        return state
+        
 
-
-    def step(self, action, agent=0):
-        if self.env_type=='gym':
-            return self.env.step(action)
-
-        if self.env_type=='kaggle':
-
-            status = self.env.step([self.actions[action]])
-            state = self.get_geese_observation(agent, self.env.state)
-            reward = status[agent]['reward']
-            if status[agent]['status']=='DONE':
-                done = True
-            else:
-                done = False
-            return state, reward, done, 1
     
-    def multistep(self, actions):
-        """Useful if the environment accepts multiple actions simultaneously"""
-        if self.env_type=='kaggle':
-            done = False
-            prev_status = self.env.state
-            for i in range(0, self.num_agents):
-                old_board = self.get_geese_observation(i, prev_status)
-                old_geese_loc = self.get_geese_coord(old_board)
+    def step(self, action_value):
 
-                if len(old_geese_loc) > 0:
-                    self.prev_head_locations[i] = old_geese_loc[0]
-
-
-            status = self.env.step([self.actions[action] for action in actions])
-            next_states, rewards, dones = [], [], []
-
-            running = False
-            for i in range(0, self.num_agents):
-
-                next_states.append(self.get_geese_observation(i, self.env.state))
-                reward = self.reward_geese(prev_status, status, i)
-                #rewards.append(status[i]['reward'])
-                rewards.append(reward)
-                if status[i]['status']=='DONE':
-                    dones.append(True)
-                else:
-                    dones.append(False)
-                if status[i]['status']=='ACTIVE':
-                    running = True
-            '''
-            if False not in dones:
-                done = True
+        # print(action_value)
+        # Turn a continuous action space into discrete
+        if abs(action_value[0]) > abs(action_value[1]):
+            if action_value[0] > 0:
+                action_value = 2
             else:
-                done = False
-            '''
-            if running == False:
-                done = True
+                action_value = 3
+        else:
+            if action_value[1] > 0:
+                action_value = 0
             else:
-                done = False
+                action_value = 1
 
-            return next_states, rewards, dones, done
+
+        direction = self.actions[action_value]
+        
+        prev_status = self.env.state
+
+        old_board = self.get_geese_observation(prev_status)
+        old_geese_loc = self.get_geese_coord(old_board)
+
+        if len(old_geese_loc) > 0:
+            self.prev_head_locations[self.my_index] = old_geese_loc[0]
+        
+        self.obs, reward, done, info = self.trainer.step(direction)
+
+
+        next_state = self.get_geese_observation(self.env.state)
+
+        reward = self.reward_geese(prev_status[0].observation, self.obs, self.my_index)
+
+        return next_state, reward, done, {}
     
     def reward_geese(self, prev_status, status, geese):
 
-        step = status[0].observation.step
-        reward = status[geese]['reward']
+        step = status.step
         step_reward = 0
-        old_length = len(prev_status[0].observation.geese[geese])
-        new_length = len(status[0].observation.geese[geese])
+        old_length = len(prev_status.geese[geese])
+        new_length = len(status.geese[geese])
 
-        old_board = self.get_geese_observation(geese, prev_status)
-        board = self.get_geese_observation(geese, self.env.state)
+        old_board = self.get_geese_observation(prev_status)
+        board = self.get_geese_observation(self.env.state)
 
 
         old_geese_loc = self.get_geese_coord(old_board)
@@ -150,7 +123,7 @@ class EnvWrap:
             new_min_distance = min(new_distances)
             if old_min_distance > new_min_distance:
                 # Moved closer to a food
-                move_reward = 10 / (new_min_distance + 1)
+                move_reward = 20 / (new_min_distance + 1)
                 #print('rewarded')
             else:
                 #moved away
@@ -245,7 +218,7 @@ class EnvWrap:
         elif self.env_type=='kaggle':
             return self.get_geese_observation(agent, self.env.state)   
     
-    def get_geese_observation(self, agent, state):
+    def get_geese_observation(self, state):
         """
         Given a particular geese, does some processing and returns a geese specific observation. 
         Unfortunately specific to the geese environment for now.
@@ -257,12 +230,20 @@ class EnvWrap:
         100: food
         """
 
+        if type(state) is list:
+            state = state[0].observation
+        else:
+
+            state = Observation(state)
+
+        self.my_index = state.index
+        agent = self.my_index
         game_board_self = np.zeros(self.rows*self.columns, None)
         game_board_enemy = np.zeros(self.rows*self.columns, None)
         game_board_food = np.zeros(self.rows*self.columns, None)
 
 
-        for i, geese in enumerate(state[0].observation.geese):
+        for i, geese in enumerate(state.geese):
             identify=0
             if i==agent:
                 for j, cell in enumerate(geese):
@@ -278,7 +259,7 @@ class EnvWrap:
                     else:
                         game_board_enemy[cell] = ENEMY_HEAD_VALUE
                 
-        for food in state[0].observation.food:
+        for food in state.food:
             game_board_food[food] = FOOD_VALUE
         game_board_self = game_board_self.reshape([self.rows, self.columns])
         game_board_enemy = game_board_enemy.reshape([self.rows, self.columns])

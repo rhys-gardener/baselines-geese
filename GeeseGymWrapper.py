@@ -5,14 +5,23 @@ from math import sqrt
 import gym
 import kaggle_environments as kaggle
 from kaggle_environments.envs.hungry_geese.hungry_geese import Observation, Configuration, Action, row_col, greedy_agent, GreedyAgent
+from agent import agent3
 import numpy as np
 
 import logging
 
 from gym.spaces import Discrete, Box
 
+FOOD_VALUE = 255
+SELF_HEAD_VALUE = 50
+SELF_BODY_VALUE = 51
+ENEMY_HEAD_VALUE = 10
+ENEMY_BODY_VALUE = 11
+
 
 class HungryGeeseKaggle(gym.Env):
+    '''Creates a weapper around the hungry geese kaggle environment so we can interact with it as if it's a gym environment.
+    This is particularly useful so we can define our own step and reward functions.'''
 
     def __init__(self):
         
@@ -22,7 +31,7 @@ class HungryGeeseKaggle(gym.Env):
         self.rows = self.env.configuration.rows
         self.columns = self.env.configuration.columns
         #self.observation_space = np.array((self.rows, self.columns, 3))
-        self.observation_space = Box(low=-100, high=1000, shape=(self.rows, self.columns, 3), dtype=np.float32)
+        self.observation_space = Box(low=0, high=255, shape=(self.rows, self.columns, 3), dtype=np.uint8)
         # self.observation_space = self.rows * self.columns
         self.action_space = Discrete(4)
         self.discrete = True
@@ -32,7 +41,7 @@ class HungryGeeseKaggle(gym.Env):
         self.names = ['geese1','geese2','geese3','geese4']
         # Tuple corresponding to the min and max possible rewards
         self.reward_range = (-20, 100)
-
+        # Specify what the agent should be trained against. Set to 'agent3' to train against the last best model
         self.trainer = self.env.train([None,'greedy','greedy','greedy'])
         self.my_index = 0
 
@@ -46,7 +55,6 @@ class HungryGeeseKaggle(gym.Env):
 
     
     def step(self, action_value):
-        """Useful if the environment accepts multiple actions simultaneously"""
         direction = self.actions[action_value]
         
         prev_status = self.env.state
@@ -67,7 +75,7 @@ class HungryGeeseKaggle(gym.Env):
         return next_state, reward, done, {}
     
     def reward_geese(self, prev_status, status, geese):
-
+        '''Calculate reward from environment states'''
         step = status.step
         step_reward = 0
         old_length = len(prev_status.geese[geese])
@@ -102,11 +110,11 @@ class HungryGeeseKaggle(gym.Env):
             new_min_distance = min(new_distances)
             if old_min_distance > new_min_distance:
                 # Moved closer to a food
-                move_reward = 100 / (new_min_distance + 1)
+                move_reward = 5 
                 #print('rewarded')
             else:
                 #moved away
-                move_reward = -20
+                move_reward = -2
                 #print('punished')
 
         length_reward = 0
@@ -119,7 +127,7 @@ class HungryGeeseKaggle(gym.Env):
 
         # Food reward is based on how quickly food was obtained
         if new_length > old_length:
-            food_reward = 200 - 2*self.food_history[geese]
+            food_reward = 10
             self.food_history[geese] = 0
         else:
             self.food_history[geese] += 1
@@ -130,23 +138,22 @@ class HungryGeeseKaggle(gym.Env):
         #print(f'reward calc: reward: {reward}, step_reward {step_reward}, length {length_reward}')
         return step_reward + length_reward + food_reward + punish + move_reward
     
-
+    # Get coordinates
     def get_geese_coord(self, board):
-        return self.get_coord_from_np_grid(board, 101)
-    
+        return self.get_coord_from_np_grid(board, SELF_HEAD_VALUE)
+
     def get_food_coord(self, board):
-        return self.get_coord_from_np_grid(board, 1000)
-    
+        return self.get_coord_from_np_grid(board, FOOD_VALUE)
+
     def get_enemy_geese_head_coord(self, board):
-        return self.get_coord_from_np_grid(board, -99)
-   
-    
+        return self.get_coord_from_np_grid(board, ENEMY_HEAD_VALUE)
+
+
     def get_coord_from_np_grid(self, grid, value):
         coords = []
         for i in range(0, len(np.where(grid==value)[0])):
             coords.append((np.where(grid==value)[0][i], np.where(grid==value)[1][i]))
         return coords
-    
 
     def get_distance_toroidal(self, coord1, coord2):
         x1, y1 = coord1[0], coord1[1]
@@ -163,7 +170,6 @@ class HungryGeeseKaggle(gym.Env):
 
         return sqrt(dx*dx + dy*dy)
 
-    
     def coordinates_adjacent_check(self, coord1, coord2):
         x1, y1 = coord1
         x2, y2 = coord2
@@ -185,8 +191,7 @@ class HungryGeeseKaggle(gym.Env):
         x = x
         y = y - 1
         return (x, y)
-        
-    
+
     def get_state(self, agent=0):
         if self.env_type=='gym':
             if self.env_name=='AirRaid-v0':
@@ -196,17 +201,10 @@ class HungryGeeseKaggle(gym.Env):
                 return self.env.state
         elif self.env_type=='kaggle':
             return self.get_geese_observation(agent, self.env.state)   
-    
+
     def get_geese_observation(self, state):
         """
         Given a particular geese, does some processing and returns a geese specific observation. 
-        Unfortunately specific to the geese environment for now.
-        Encoding as follows: 
-        2: enemy snake head
-        1: enemy snake body
-        11: own head
-        12: own body
-        100: food
         """
 
         if type(state) is list:
@@ -225,22 +223,21 @@ class HungryGeeseKaggle(gym.Env):
         for i, geese in enumerate(state.geese):
             identify=0
             if i==agent:
-                identify=100
                 for j, cell in enumerate(geese):
                     if j == 0:
-                        game_board_self[cell] = identify+1
+                        game_board_self[cell] = SELF_HEAD_VALUE
                     else:
-                        game_board_self[cell] = identify+2
+                        game_board_self[cell] = SELF_BODY_VALUE
             else:
                 identify=-100
                 for j, cell in enumerate(geese):
                     if j == 0:
-                        game_board_enemy[cell] = identify+1
+                        game_board_enemy[cell] = ENEMY_BODY_VALUE
                     else:
-                        game_board_enemy[cell] = identify+2
+                        game_board_enemy[cell] = ENEMY_HEAD_VALUE
                 
         for food in state.food:
-            game_board_food[food] = 1000
+            game_board_food[food] = FOOD_VALUE
         game_board_self = game_board_self.reshape([self.rows, self.columns])
         game_board_enemy = game_board_enemy.reshape([self.rows, self.columns])
         game_board_food = game_board_food.reshape([self.rows, self.columns])
@@ -251,6 +248,7 @@ class HungryGeeseKaggle(gym.Env):
             head = self.prev_head_locations[agent]
         else:
             head = head[0]
+        # Rotate coordinates so the head is in the center. 
         game_board_self = np.roll(game_board_self, 5-head[1], axis=1)
         game_board_self = np.roll(game_board_self, 3-head[0], axis=0)
         game_board_enemy = np.roll(game_board_enemy, 5-head[1], axis=1)
@@ -261,9 +259,3 @@ class HungryGeeseKaggle(gym.Env):
         #game_board = game_board.reshape((game_board.shape[0], game_board.shape[1], 1))
         game_board = np.dstack((game_board_self, game_board_enemy, game_board_food))
         return game_board
-        
-
-
-
-
-    

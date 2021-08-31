@@ -9,6 +9,9 @@ from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.results_plotter import load_results, ts2xy
 
+from stable_baselines3.common.vec_env import SubprocVecEnv
+
+
 from GeeseGymWrapper import HungryGeeseKaggle
 
 import json
@@ -64,7 +67,6 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
                     if self.verbose > 0:
                         print("Saving new best model to {}".format(self.save_path))
                     self.model.save(self.save_path)
-                    print(self.model.policy.state_dict().keys())
                     th.save(self.model.policy.state_dict(), f'tmp/best_pytorch_model')
 
         return True
@@ -72,9 +74,9 @@ class SaveOnBestTrainingRewardCallback(BaseCallback):
 class Net(BaseFeaturesExtractor):
     def __init__(self, observation_space: gym.spaces.Box, features_dim: int = 512):
         super(Net, self).__init__(observation_space, features_dim)
-        self.conv1 = nn.Conv2d(7, 32, kernel_size=1)
+        self.conv1 = nn.Conv2d(3, 32, kernel_size=3)
         self.conv2 = nn.Conv2d(32, 64, kernel_size=1)
-        self.fc3 = nn.Linear(2112, features_dim)
+        self.fc3 = nn.Linear(2880, features_dim)
 
     def forward(self, x):
         x = F.relu(self.conv1(x))
@@ -83,32 +85,49 @@ class Net(BaseFeaturesExtractor):
         x = F.relu(self.fc3(x))
         return x
     
-# Create log dir
-log_dir = "tmp/"
+def main():
+    # Create log dir
+    log_dir = "tmp/"
 
 
-# We create multiple vectorized environments
-#geese_env = make_vec_env(HungryGeeseKaggle, n_envs = 6)
-#env = gym.make(HungryGeeseKaggle)
-env = HungryGeeseKaggle()
-env = Monitor(env, log_dir)
+    # Create multiple vectorized environments
+    # geese_env = make_vec_env(HungryGeeseKaggle, n_envs = 6)
+    # env = gym.make(HungryGeeseKaggle)
 
-os.makedirs(log_dir, exist_ok=True)
-# Create the callback: check every 1000 steps
+    # env = HungryGeeseKaggle()
+    # env = Monitor(env, log_dir)
+    # print(env.observation_space.shape)
+    os.makedirs(log_dir, exist_ok=True)
+    # Create the callback: check every 1000 steps
 
-callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
-# We create the PPO agent and train it
-'''
-policy_kwargs = {
-    'activation_fn':th.nn.ReLU, 
-    'net_arch':[64, dict(pi=[32, 16], vf=[32, 16])],
-    'features_extractor_class':Net,
-}'''
-model = PPO('MlpPolicy', env, verbose=1,
-            tensorboard_log="ppo_geese_tensorboard/")
-model.load('tmp/best_model.zip')
-print(model)
-print(model.policy)
-print(model.get_parameters())
-model.learn(total_timesteps=((1e6)*10000), callback=callback)
-model.save("ppo_goose")
+    callback = SaveOnBestTrainingRewardCallback(check_freq=1000, log_dir=log_dir)
+    # We create the PPO agent and train it
+
+    policy_kwargs = {
+        'activation_fn':th.nn.ReLU, 
+        'net_arch':[512, dict(pi=[256, 32], vf=[256, 32])],
+        'features_extractor_class':Net,
+    }
+
+
+
+    env = make_vec_env(HungryGeeseKaggle,
+            8,
+            monitor_dir=log_dir,
+            vec_env_cls=SubprocVecEnv,
+            vec_env_kwargs={"start_method": 'fork'})
+
+    model = PPO('MlpPolicy', env, verbose=1, tensorboard_log="ppo_geese_tensorboard/", learning_rate = 0.0005, ent_coef=0.003, gae_lambda=0.97)
+
+    # model = model.load('tmp/best_model.zip', env=env, verbose=1,tensorboard_log="ppo_geese_tensorboard/")
+    # model = SAC('MlpPolicy', env, verbose=1, tensorboard_log="ppo_geese_tensorboard/")
+    # model = model.load('tmp/best_model.zip', env=env, verbose=1,tensorboard_log="ppo_geese_tensorboard/")
+    print(model)
+    print(model.policy)
+    #print(model.get_parameters())
+    model.learn(total_timesteps=((1e6)*10000), callback=callback)
+    model.save("ppo_goose")
+
+
+if __name__ == "__main__":
+    main()
