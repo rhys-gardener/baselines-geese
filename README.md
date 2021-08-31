@@ -1,8 +1,10 @@
 # baselines-geese
 
-Personal learning project - using baselines to train an agent for the hungry-geese game
+Personal learning project - using baselines to train an RL agent to learn how to play the hungry-geese game provided by Kaggle:
 
 https://www.kaggle.com/c/hungry-geese
+
+
 
 Create environment from requirements.txt before running. 
 
